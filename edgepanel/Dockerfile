@@ -11,8 +11,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o edgepanel .
 
 FROM alpine:3.19
 
-# nginx is used only for `nginx -t` (config validation) and `nginx -s reload`
-RUN apk add --no-cache ca-certificates nginx
+# docker CLI is used to exec nginx -t / nginx -s reload in the nginx-edge container
+RUN apk add --no-cache ca-certificates docker-cli
 
 WORKDIR /app
 

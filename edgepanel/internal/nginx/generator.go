@@ -15,6 +15,8 @@ import (
 const routeTemplate = `server {
     listen 80;
     server_name {{.Subdomain}};
+
+    root /usr/share/nginx/html;
 {{if .WAFEnabled}}
     modsecurity on;
     modsecurity_rules_file /etc/modsecurity.d/owasp-crs/crs-setup.conf;
@@ -23,14 +25,17 @@ const routeTemplate = `server {
 {{if eq .MaintenanceMode "global"}}
     location / {
 {{if .AllowlistBypass}}
-        # Allowlisted IPs bypass maintenance; all others are denied with 503.
+        # Allowlisted IPs bypass maintenance; all others get a 503.
         include /etc/nginx/conf.d/generated/iplists/{{.ID}}.allow;
         deny all;
-        error_page 403 /maintenance.html;
+        error_page 403 =503 /maintenance.html;
 {{else}}
         return 503;
-        error_page 503 /maintenance.html;
 {{end}}
+    }
+    error_page 503 /maintenance.html;
+    location = /maintenance.html {
+        internal;
     }
 {{end}}
 {{else}}
@@ -56,14 +61,16 @@ const wafTemplate = `# Global WAF settings
 `
 
 type Generator struct {
-	ConfigDir   string
-	NginxBinary string
+	ConfigDir       string
+	NginxBinary     string
+	NginxContainer  string // if set, use `docker exec <container>` instead of local binary
 }
 
 func New(configDir, nginxBinary string) *Generator {
 	return &Generator{
-		ConfigDir:   configDir,
-		NginxBinary: nginxBinary,
+		ConfigDir:      configDir,
+		NginxBinary:    nginxBinary,
+		NginxContainer: os.Getenv("NGINX_CONTAINER"),
 	}
 }
 
@@ -123,13 +130,22 @@ func (g *Generator) Generate(routes []*models.Route, settings *models.GlobalSett
 }
 
 func (g *Generator) Test() (string, error) {
-	cmd := exec.Command(g.NginxBinary, "-t")
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return g.execNginx("-t")
 }
 
 func (g *Generator) Reload() (string, error) {
-	cmd := exec.Command(g.NginxBinary, "-s", "reload")
+	return g.execNginx("-s", "reload")
+}
+
+// execNginx runs an nginx command either locally or via docker exec.
+func (g *Generator) execNginx(args ...string) (string, error) {
+	var cmd *exec.Cmd
+	if g.NginxContainer != "" {
+		dockerArgs := append([]string{"exec", g.NginxContainer, g.NginxBinary}, args...)
+		cmd = exec.Command("docker", dockerArgs...)
+	} else {
+		cmd = exec.Command(g.NginxBinary, args...)
+	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

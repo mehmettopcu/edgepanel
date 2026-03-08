@@ -33,11 +33,13 @@ services:
     volumes:
       - edgepanel-data:/data
       - nginx-generated:/etc/nginx/conf.d/generated
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - DB_PATH=/data/edgepanel.db
       - JWT_SECRET=${JWT_SECRET:-changeme-please-use-env}
       - NGINX_CONFIG_DIR=/etc/nginx/conf.d/generated
       - NGINX_BINARY=/usr/sbin/nginx
+      - NGINX_CONTAINER=nginx-edge
       - PORT=8080
       - GRAFANA_URL=${GRAFANA_URL:-http://localhost:3000}
     depends_on:

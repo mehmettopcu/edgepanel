@@ -7,6 +7,9 @@ RUN mkdir -p /etc/nginx/conf.d/generated/routes \
 # Copy NGINX main config
 COPY nginx.conf /etc/nginx/nginx.conf
 
+# Maintenance page served when a route is in maintenance mode
+COPY maintenance.html /usr/share/nginx/html/maintenance.html
+
 # ModSecurity is enabled via MODSEC_RULE_ENGINE env var
 
 EXPOSE 80 443
