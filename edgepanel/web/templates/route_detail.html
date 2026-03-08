@@ -110,29 +110,35 @@ document.getElementById('maint-enabled').addEventListener('change', function() {
         : '<strong style="color:#27ae60">MAINTENANCE OFF</strong>';
 });
 
+function collectRoutePayload() {
+    return {
+        name: document.getElementById('r-name').value,
+        subdomain: document.getElementById('r-subdomain').value,
+        upstream: document.getElementById('r-upstream').value,
+        maintenance_enabled: document.getElementById('maint-enabled').checked,
+        maintenance_mode: document.getElementById('maint-mode').value,
+        maintenance_paths: document.getElementById('maint-paths').value,
+        allowlist_bypass: document.getElementById('maint-allowlist-bypass').checked,
+        ip_filter_enabled: document.getElementById('ip-enabled').checked,
+        ip_default_policy: document.getElementById('ip-policy').value,
+        ip_allowlist: document.getElementById('ip-allowlist').value,
+        ip_denylist: document.getElementById('ip-denylist').value,
+        waf_enabled: document.getElementById('waf-enabled').checked,
+        waf_paranoia_level: parseInt(document.getElementById('waf-paranoia').value)
+    };
+}
+
+async function saveRoute(successMsg) {
+    await apiFetch('/api/routes/'+routeId, {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(collectRoutePayload())
+    });
+    showAlert(successMsg);
+}
+
 async function saveBasic() {
-    try {
-        await apiFetch('/api/routes/'+routeId, {
-            method: 'PUT',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({
-                name: document.getElementById('r-name').value,
-                subdomain: document.getElementById('r-subdomain').value,
-                upstream: document.getElementById('r-upstream').value,
-                maintenance_enabled: document.getElementById('maint-enabled').checked,
-                maintenance_mode: document.getElementById('maint-mode').value,
-                maintenance_paths: document.getElementById('maint-paths').value,
-                allowlist_bypass: document.getElementById('maint-allowlist-bypass').checked,
-                ip_filter_enabled: document.getElementById('ip-enabled').checked,
-                ip_default_policy: document.getElementById('ip-policy').value,
-                ip_allowlist: document.getElementById('ip-allowlist').value,
-                ip_denylist: document.getElementById('ip-denylist').value,
-                waf_enabled: document.getElementById('waf-enabled').checked,
-                waf_paranoia_level: parseInt(document.getElementById('waf-paranoia').value)
-            })
-        });
-        showAlert('Basic info saved!');
-    } catch(e) { showAlert(e.message, 'error'); }
+    try { await saveRoute('Basic info saved!'); } catch(e) { showAlert(e.message, 'error'); }
 }
 
 async function saveMaintenance() {
@@ -168,28 +174,7 @@ async function saveIPFilter() {
 }
 
 async function saveWAF() {
-    try {
-        await apiFetch('/api/routes/'+routeId, {
-            method: 'PUT',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({
-                name: document.getElementById('r-name').value,
-                subdomain: document.getElementById('r-subdomain').value,
-                upstream: document.getElementById('r-upstream').value,
-                maintenance_enabled: document.getElementById('maint-enabled').checked,
-                maintenance_mode: document.getElementById('maint-mode').value,
-                maintenance_paths: document.getElementById('maint-paths').value,
-                allowlist_bypass: document.getElementById('maint-allowlist-bypass').checked,
-                ip_filter_enabled: document.getElementById('ip-enabled').checked,
-                ip_default_policy: document.getElementById('ip-policy').value,
-                ip_allowlist: document.getElementById('ip-allowlist').value,
-                ip_denylist: document.getElementById('ip-denylist').value,
-                waf_enabled: document.getElementById('waf-enabled').checked,
-                waf_paranoia_level: parseInt(document.getElementById('waf-paranoia').value)
-            })
-        });
-        showAlert('WAF settings saved!');
-    } catch(e) { showAlert(e.message, 'error'); }
+    try { await saveRoute('WAF settings saved!'); } catch(e) { showAlert(e.message, 'error'); }
 }
 
 async function applyNginx() {
