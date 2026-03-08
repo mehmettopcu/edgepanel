@@ -83,6 +83,17 @@ CREATE TABLE IF NOT EXISTS global_settings (
     waf_enabled BOOLEAN NOT NULL DEFAULT 1,
     waf_paranoia_level INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS nginx_config_schema (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    param_name TEXT UNIQUE NOT NULL,
+    param_type TEXT NOT NULL CHECK(param_type IN ('boolean','integer','string','enum','cidr_list','url')),
+    allowed_values TEXT NOT NULL DEFAULT '',
+    min_value INTEGER,
+    max_value INTEGER,
+    required BOOLEAN NOT NULL DEFAULT 0,
+    description TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 `
 	_, err := d.conn.Exec(schema)
 	return err
@@ -138,6 +149,52 @@ func (d *DB) SeedInitialData() error {
 			}
 		}
 		log.Println("Seeded example routes")
+	}
+
+	if err := d.seedConfigSchema(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// seedConfigSchema inserts the parameter schema definitions on first run.
+// Uses INSERT OR IGNORE so re-runs are safe.
+func (d *DB) seedConfigSchema() error {
+	type schemaRow struct {
+		name    string
+		ptype   string
+		allowed string
+		minVal  interface{}
+		maxVal  interface{}
+		req     int
+		desc    string
+	}
+	rows := []schemaRow{
+		{"name", "string", "", nil, nil, 1, "Unique name for the route"},
+		{"subdomain", "string", "", nil, nil, 1, "Subdomain the route listens on (e.g. app1.example.com)"},
+		{"upstream", "url", "", nil, nil, 1, "Backend upstream URL (http/https + host + optional port/path)"},
+		{"maintenance_enabled", "boolean", "", nil, nil, 0, "Whether maintenance mode is active for this route"},
+		{"maintenance_mode", "enum", `["global","path"]`, nil, nil, 0, "global: all requests return 503; path: only listed path prefixes return 503"},
+		{"maintenance_paths", "string", "", nil, nil, 0, "Newline-separated path prefixes for path-mode maintenance"},
+		{"allowlist_bypass", "boolean", "", nil, nil, 0, "Allowlisted IPs bypass maintenance mode when enabled"},
+		{"ip_filter_enabled", "boolean", "", nil, nil, 0, "Whether IP-based filtering is active"},
+		{"ip_default_policy", "enum", `["allow","deny"]`, nil, nil, 0, "Default policy when no IP list rule matches"},
+		{"ip_allowlist", "cidr_list", "", nil, nil, 0, "Newline-separated IPv4/IPv6 CIDRs to explicitly allow"},
+		{"ip_denylist", "cidr_list", "", nil, nil, 0, "Newline-separated IPv4/IPv6 CIDRs to explicitly deny"},
+		{"waf_enabled", "boolean", "", nil, nil, 0, "Enable ModSecurity WAF for this route"},
+		{"waf_paranoia_level", "integer", "", 1, 4, 0, "OWASP CRS paranoia level (1=low false-positive risk, 4=strict)"},
+	}
+	for _, row := range rows {
+		_, err := d.conn.Exec(`
+			INSERT OR IGNORE INTO nginx_config_schema
+				(param_name, param_type, allowed_values, min_value, max_value, required, description)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			row.name, row.ptype, row.allowed, row.minVal, row.maxVal, row.req, row.desc,
+		)
+		if err != nil {
+			return fmt.Errorf("seed schema %s: %w", row.name, err)
+		}
 	}
 	return nil
 }
@@ -376,4 +433,39 @@ func (d *DB) UpdateGlobalSettings(gs *models.GlobalSettings) error {
 	_, err := d.conn.Exec("UPDATE global_settings SET waf_enabled=?, waf_paranoia_level=? WHERE id=?",
 		gs.WAFEnabled, gs.WAFParanoiaLevel, gs.ID)
 	return err
+}
+
+// ListConfigSchema returns all rows from nginx_config_schema.
+func (d *DB) ListConfigSchema() ([]*models.NginxConfigSchema, error) {
+	rows, err := d.conn.Query(
+		`SELECT id, param_name, param_type, allowed_values, min_value, max_value, required, description
+		 FROM nginx_config_schema ORDER BY id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []*models.NginxConfigSchema
+	for rows.Next() {
+		s := &models.NginxConfigSchema{}
+		if err := rows.Scan(&s.ID, &s.ParamName, &s.ParamType,
+			&s.AllowedValues, &s.MinValue, &s.MaxValue, &s.Required, &s.Description); err != nil {
+			return nil, err
+		}
+		list = append(list, s)
+	}
+	return list, rows.Err()
+}
+
+// GetConfigSchemaMap returns a map of param_name → NginxConfigSchema for fast lookups.
+func (d *DB) GetConfigSchemaMap() (map[string]*models.NginxConfigSchema, error) {
+	list, err := d.ListConfigSchema()
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]*models.NginxConfigSchema, len(list))
+	for _, s := range list {
+		m[s.ParamName] = s
+	}
+	return m, nil
 }

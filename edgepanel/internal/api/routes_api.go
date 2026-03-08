@@ -9,10 +9,21 @@ import (
 	"github.com/mehmettopcu/edgepanel/internal/auth"
 	"github.com/mehmettopcu/edgepanel/internal/db"
 	"github.com/mehmettopcu/edgepanel/internal/models"
+	"github.com/mehmettopcu/edgepanel/internal/validation"
 )
 
 type RoutesHandler struct {
 	DB *db.DB
+}
+
+// writeValidationErrors sends a 422 response with structured field errors.
+func writeValidationErrors(w http.ResponseWriter, errs validation.ValidationErrors) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":  "validation failed",
+		"fields": errs,
+	})
 }
 
 func (h *RoutesHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +58,20 @@ func (h *RoutesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if route.IPDefaultPolicy == "" {
 		route.IPDefaultPolicy = "allow"
 	}
+	if route.WAFParanoiaLevel == 0 {
+		route.WAFParanoiaLevel = 1
+	}
+
+	schemaMap, err := h.DB.GetConfigSchemaMap()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if errs := validation.ValidateRoute(&route, schemaMap); errs.HasErrors() {
+		writeValidationErrors(w, errs)
+		return
+	}
+
 	created, err := h.DB.CreateRoute(&route)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -108,6 +133,26 @@ func (h *RoutesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated.ID = id
+	if updated.WAFParanoiaLevel == 0 {
+		updated.WAFParanoiaLevel = existing.WAFParanoiaLevel
+	}
+	if updated.MaintenanceMode == "" {
+		updated.MaintenanceMode = existing.MaintenanceMode
+	}
+	if updated.IPDefaultPolicy == "" {
+		updated.IPDefaultPolicy = existing.IPDefaultPolicy
+	}
+
+	schemaMap, err := h.DB.GetConfigSchemaMap()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if errs := validation.ValidateRoute(&updated, schemaMap); errs.HasErrors() {
+		writeValidationErrors(w, errs)
+		return
+	}
+
 	if err := h.DB.UpdateRoute(&updated); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -153,6 +198,26 @@ func (h *RoutesHandler) ToggleMaintenance(w http.ResponseWriter, r *http.Request
 	}
 	route.MaintenancePaths = req.Paths
 	route.AllowlistBypass = req.AllowlistBypass
+
+	schemaMap, err := h.DB.GetConfigSchemaMap()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// Validate only maintenance-relevant fields.
+	partial := &models.Route{
+		Name:               route.Name,
+		Subdomain:          route.Subdomain,
+		Upstream:           route.Upstream,
+		MaintenanceMode:    route.MaintenanceMode,
+		IPDefaultPolicy:    route.IPDefaultPolicy,
+		WAFParanoiaLevel:   route.WAFParanoiaLevel,
+	}
+	if errs := validation.ValidateRoute(partial, schemaMap); errs.HasErrors() {
+		writeValidationErrors(w, errs)
+		return
+	}
+
 	if err := h.DB.UpdateRoute(route); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -201,6 +266,28 @@ func (h *RoutesHandler) SetIPFilter(w http.ResponseWriter, r *http.Request) {
 	}
 	route.IPAllowlist = req.Allowlist
 	route.IPDenylist = req.Denylist
+
+	schemaMap, err := h.DB.GetConfigSchemaMap()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// Validate IP-filter-relevant fields.
+	partial := &models.Route{
+		Name:             route.Name,
+		Subdomain:        route.Subdomain,
+		Upstream:         route.Upstream,
+		IPDefaultPolicy:  route.IPDefaultPolicy,
+		IPAllowlist:      route.IPAllowlist,
+		IPDenylist:       route.IPDenylist,
+		MaintenanceMode:  route.MaintenanceMode,
+		WAFParanoiaLevel: route.WAFParanoiaLevel,
+	}
+	if errs := validation.ValidateRoute(partial, schemaMap); errs.HasErrors() {
+		writeValidationErrors(w, errs)
+		return
+	}
+
 	if err := h.DB.UpdateRoute(route); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -209,3 +296,4 @@ func (h *RoutesHandler) SetIPFilter(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(route)
 }
+

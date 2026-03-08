@@ -48,6 +48,7 @@ func main() {
 	usersHandler := &api.UsersHandler{DB: database}
 	applyHandler := &api.ApplyHandler{DB: database, Generator: gen}
 	auditHandler := &api.AuditHandler{DB: database}
+	settingsHandler := &api.SettingsHandler{DB: database}
 	uiHandler := &api.UIHandler{DB: database, Tmpl: tmpl}
 
 	r := chi.NewRouter()
@@ -80,6 +81,13 @@ func main() {
 
 			r.Post("/apply", applyHandler.Apply)
 			r.Get("/audit", auditHandler.List)
+
+			// Config schema — readable by all authenticated users
+			r.Get("/schema", settingsHandler.GetSchema)
+
+			// Global settings — readable by all, writable by admin only
+			r.Get("/settings", settingsHandler.GetSettings)
+			r.With(auth.AdminOnly).Put("/settings", settingsHandler.UpdateSettings)
 
 			// Admin only
 			r.Group(func(r chi.Router) {

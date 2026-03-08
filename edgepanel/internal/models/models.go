@@ -52,3 +52,28 @@ type GlobalSettings struct {
 	WAFEnabled       bool  `json:"waf_enabled" db:"waf_enabled"`
 	WAFParanoiaLevel int   `json:"waf_paranoia_level" db:"waf_paranoia_level"`
 }
+
+// ConfigParamType enumerates the types a schema parameter can have.
+type ConfigParamType string
+
+const (
+	ParamTypeBoolean  ConfigParamType = "boolean"
+	ParamTypeInteger  ConfigParamType = "integer"
+	ParamTypeString   ConfigParamType = "string"
+	ParamTypeEnum     ConfigParamType = "enum"
+	ParamTypeCIDRList ConfigParamType = "cidr_list"
+	ParamTypeURL      ConfigParamType = "url"
+)
+
+// NginxConfigSchema describes the valid values / constraints for a single
+// configuration parameter. Rows are seeded once and can be updated by admins.
+type NginxConfigSchema struct {
+	ID            int64           `json:"id" db:"id"`
+	ParamName     string          `json:"param_name" db:"param_name"`
+	ParamType     ConfigParamType `json:"param_type" db:"param_type"`
+	AllowedValues string          `json:"allowed_values" db:"allowed_values"` // JSON array for enum, empty otherwise
+	MinValue      *int            `json:"min_value" db:"min_value"`           // for integer type
+	MaxValue      *int            `json:"max_value" db:"max_value"`           // for integer type
+	Required      bool            `json:"required" db:"required"`
+	Description   string          `json:"description" db:"description"`
+}

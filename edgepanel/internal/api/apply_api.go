@@ -7,6 +7,7 @@ import (
 	"github.com/mehmettopcu/edgepanel/internal/auth"
 	"github.com/mehmettopcu/edgepanel/internal/db"
 	"github.com/mehmettopcu/edgepanel/internal/nginx"
+	"github.com/mehmettopcu/edgepanel/internal/validation"
 )
 
 type ApplyHandler struct {
@@ -25,11 +26,41 @@ func (h *ApplyHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to get settings", http.StatusInternalServerError)
 		return
 	}
-	if err := h.Generator.Generate(routes, settings); err != nil {
-		http.Error(w, "failed to generate config: "+err.Error(), http.StatusInternalServerError)
+
+	// Schema-validate every route before touching the filesystem.
+	schemaMap, err := h.DB.GetConfigSchemaMap()
+	if err != nil {
+		http.Error(w, "failed to load config schema", http.StatusInternalServerError)
 		return
 	}
-	testOut, err := h.Generator.Test()
+	for _, route := range routes {
+		if errs := validation.ValidateRoute(route, schemaMap); errs.HasErrors() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":    "route validation failed before apply",
+				"route_id": route.ID,
+				"route":    route.Name,
+				"fields":   errs,
+			})
+			return
+		}
+	}
+
+	// Validate global settings paranoia level.
+	if errs := validation.ValidateGlobalSettings(settings.WAFParanoiaLevel, schemaMap); errs.HasErrors() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":  "global settings validation failed",
+			"fields": errs,
+		})
+		return
+	}
+
+	// Generate configs into a staging directory, run nginx -t against the staging
+	// tree, and only swap to the live directory when the test passes.
+	testOut, err := h.Generator.GenerateAndTest(routes, settings)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -39,6 +70,7 @@ func (h *ApplyHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
 	reloadOut, err := h.Generator.Reload()
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -54,3 +86,4 @@ func (h *ApplyHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "nginx config applied and reloaded", "output": reloadOut})
 }
+
