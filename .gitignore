@@ -1,0 +1,11 @@
+# Data
+/edgepanel/edgepanel
+*.db
+*.db-shm
+*.db-wal
+
+# Environment
+.env
+
+# Build artifacts
+dist/
