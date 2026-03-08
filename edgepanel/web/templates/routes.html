@@ -1,0 +1,82 @@
+{{template "layout" .}}
+{{define "title"}}Routes{{end}}
+{{define "content"}}
+<div class="flex" style="margin-bottom:24px">
+    <h1 style="margin:0">Routes</h1>
+    <div class="spacer" style="flex:1"></div>
+    {{if .IsAdmin}}
+    <button class="btn btn-primary" onclick="showAddModal()">+ Add Route</button>
+    <button class="btn btn-success" style="margin-left:8px" onclick="applyNginx()">Apply to NGINX</button>
+    {{end}}
+</div>
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th><th>Subdomain</th><th>Upstream</th>
+                <th>Maintenance</th><th>IP Filter</th><th>WAF</th><th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        {{range .Routes}}
+        <tr>
+            <td><strong>{{.Name}}</strong></td>
+            <td>{{.Subdomain}}</td>
+            <td><code style="font-size:0.85rem">{{.Upstream}}</code></td>
+            <td>{{if .MaintenanceEnabled}}<span class="badge badge-red">ON</span>{{else}}<span class="badge badge-green">OFF</span>{{end}}</td>
+            <td>{{if .IPFilterEnabled}}<span class="badge badge-blue">ON</span>{{else}}<span class="badge badge-gray">OFF</span>{{end}}</td>
+            <td>{{if .WAFEnabled}}<span class="badge badge-blue">ON</span>{{else}}<span class="badge badge-gray">OFF</span>{{end}}</td>
+            <td><a href="/routes/{{.ID}}" class="btn btn-secondary btn-sm">Edit</a></td>
+        </tr>
+        {{else}}
+        <tr><td colspan="7" style="text-align:center;color:#6c757d;padding:32px">No routes found.</td></tr>
+        {{end}}
+        </tbody>
+    </table>
+</div>
+
+{{if .IsAdmin}}
+<div id="add-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center">
+    <div class="card" style="width:500px;max-height:90vh;overflow-y:auto">
+        <h2>Add Route</h2>
+        <div class="form-group"><label>Name</label><input id="m-name" placeholder="app1"></div>
+        <div class="form-group"><label>Subdomain</label><input id="m-subdomain" placeholder="app1.example.com"></div>
+        <div class="form-group"><label>Upstream</label><input id="m-upstream" placeholder="http://backend:8080"></div>
+        <div class="flex mt-16">
+            <button class="btn btn-primary" onclick="createRoute()">Create</button>
+            <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        </div>
+    </div>
+</div>
+{{end}}
+{{end}}
+{{define "scripts"}}
+<script>
+function showAddModal() { document.getElementById('add-modal').style.display = 'flex'; }
+function closeModal() { document.getElementById('add-modal').style.display = 'none'; }
+async function createRoute() {
+    try {
+        await apiFetch('/api/routes', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name: document.getElementById('m-name').value,
+                subdomain: document.getElementById('m-subdomain').value,
+                upstream: document.getElementById('m-upstream').value,
+                maintenance_mode: 'global',
+                ip_default_policy: 'allow',
+                waf_enabled: true,
+                waf_paranoia_level: 1
+            })
+        });
+        window.location.reload();
+    } catch(e) { showAlert(e.message, 'error'); }
+}
+async function applyNginx() {
+    try {
+        const d = await apiFetch('/api/apply', {method:'POST'});
+        showAlert(d.message, 'success');
+    } catch(e) { showAlert(e.message, 'error'); }
+}
+</script>
+{{end}}

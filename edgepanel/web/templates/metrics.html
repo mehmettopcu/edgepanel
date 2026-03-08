@@ -1,0 +1,20 @@
+{{template "layout" .}}
+{{define "title"}}Metrics{{end}}
+{{define "content"}}
+<h1>Metrics</h1>
+<div class="card">
+    <h2>Grafana Dashboard</h2>
+    <p class="text-muted" style="margin-bottom:16px">View detailed metrics and dashboards in Grafana.</p>
+    <a href="http://localhost:3000" target="_blank" class="btn btn-primary">Open Grafana &#8594;</a>
+</div>
+<div class="card">
+    <h2>Prometheus Metrics</h2>
+    <p class="text-muted" style="margin-bottom:16px">
+        NGINX metrics are exposed via the NGINX Prometheus exporter. Configure your Prometheus instance to scrape:
+    </p>
+    <code style="display:block;padding:12px;background:#f8f9fa;border-radius:4px;font-size:0.9rem">
+        http://nginx-exporter:9113/metrics
+    </code>
+    <p class="text-muted mt-16">Key metrics include request rates, error rates, upstream latency, and connection counts.</p>
+</div>
+{{end}}
