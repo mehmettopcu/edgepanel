@@ -1,17 +1,33 @@
+# Stage 1: build nginx-agent
+FROM golang:1.22-alpine AS agent-builder
+
+WORKDIR /build
+COPY nginx-agent/ .
+RUN CGO_ENABLED=0 GOOS=linux go build -o nginx-agent .
+
+# Stage 2: nginx with embedded nginx-agent sidecar
 FROM owasp/modsecurity-crs:4-nginx-alpine-202405020410
+
+# Copy the compiled nginx-agent binary
+COPY --from=agent-builder /build/nginx-agent /usr/local/bin/nginx-agent
 
 # Create generated config directory structure
 RUN mkdir -p /etc/nginx/conf.d/generated/routes \
              /etc/nginx/conf.d/generated/iplists
 
 # Copy NGINX main config
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
 # Maintenance page served when a route is in maintenance mode
-COPY maintenance.html /usr/share/nginx/html/maintenance.html
+COPY nginx/maintenance.html /usr/share/nginx/html/maintenance.html
+
+# Startup script: launches nginx-agent in background then nginx in foreground
+COPY nginx/start.sh /start.sh
+RUN chmod +x /start.sh
 
 # ModSecurity is enabled via MODSEC_RULE_ENGINE env var
+# nginx-agent listens on port 9090 by default (AGENT_PORT env var)
 
-EXPOSE 80 443
+EXPOSE 80 443 9090
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["/start.sh"]

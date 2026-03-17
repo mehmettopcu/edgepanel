@@ -9,3 +9,4 @@
 
 # Build artifacts
 dist/
+nginx-agent/nginx-agent

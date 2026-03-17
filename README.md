@@ -6,33 +6,52 @@
 
 ## Architecture
 
+EdgePanel uses a **server-agent** pattern to decouple the control plane from the nginx data plane:
+
 ```
-                  ┌──────────────────────────────────────────┐
-Internet ──80──▶  │  nginx-edge  (NGINX + ModSecurity CRS 4) │
-                  └────────────────────┬─────────────────────┘
-                                       │ shared volume
-                  ┌────────────────────▼─────────────────────┐
-                  │  edgepanel  (Go control-plane, port 8081) │
-                  └──────────────────────────────────────────┘
+                  ┌────────────────────────────────────────────────────────┐
+Internet ──80──▶  │  nginx-edge container                                  │
+                  │  ┌───────────────────────────────────────────────────┐ │
+                  │  │  NGINX + ModSecurity CRS 4  (port 80 / 8080)     │ │
+                  │  └───────────────────────────────────────────────────┘ │
+                  │  ┌───────────────────────────────────────────────────┐ │
+                  │  │  nginx-agent  (port 9090, internal only)          │ │
+                  │  │  POST /apply  ──writes configs──▶ nginx -t/-s reload│
+                  │  └──────────────────────▲────────────────────────────┘ │
+                  └─────────────────────────│──────────────────────────────┘
+                                            │ HTTP (internal network only)
+                  ┌─────────────────────────┴────────────────────────────┐
+                  │  edgepanel  (Go control-plane, port 8081)            │
+                  │  Generates configs in memory → POST to nginx-agent   │
+                  └──────────────────────────────────────────────────────┘
                   ┌──────────────┐  ┌───────────────────────┐
                   │  backend1    │  │  backend2              │
                   │  (nginx:alp) │  │  (nginx:alp)           │
                   └──────────────┘  └───────────────────────┘
-                  ┌──────────────────────────────────────────┐
-                  │  Prometheus (9090)  +  Grafana (3000)    │
-                  └──────────────────────────────────────────┘
+                  ┌────────────────────────────────────────────────────────┐
+                  │  Prometheus (9090)  +  Grafana (3000)                  │
+                  └────────────────────────────────────────────────────────┘
 ```
 
-| Service | Image | Port |
-|---|---|---|
-| `nginx-edge` | `owasp/modsecurity-crs:4-nginx-alpine` | 80 (HTTP), 8080 (stub_status) |
-| `edgepanel` | local Go build | 8081 → 8080 (internal) |
-| `backend1/2` | `nginx:alpine` | internal only |
-| `prometheus` | `prom/prometheus:v2.51.0` | 9090 |
-| `nginx-exporter` | `nginx/nginx-prometheus-exporter:1.1.0` | 9113 |
-| `grafana` | `grafana/grafana:10.4.2` | 3000 |
+### How config updates flow
 
-`nginx-edge` and `edgepanel` share a named Docker volume (`nginx-generated`) where edgepanel writes per-route NGINX config fragments. After every change the control plane runs `nginx -s reload` via the shared socket.
+1. An operator saves a route change or clicks **Apply** in edgepanel.
+2. edgepanel renders all nginx config files **in memory** (Go templates → `map[string]string`).
+3. edgepanel sends the complete file map to `nginx-agent` via `POST http://nginx-edge:9090/apply`.
+4. nginx-agent writes each file atomically (write to `.tmp`, then rename), runs `nginx -t` to validate, and on success calls `nginx -s reload`.
+5. If `nginx -t` fails, the live config is **never touched** — edgepanel receives a `400` error with the nginx output.
+
+This approach removes the need for a shared Docker volume between edgepanel and nginx, and eliminates the Docker socket (`docker.sock`) mount that the old architecture required.
+
+| Service | Image / Build | Port | Notes |
+|---|---|---|---|
+| `nginx-edge` | local multi-stage build | 80 (HTTP), 8080 (stub_status) | Contains NGINX + ModSecurity CRS 4 + nginx-agent sidecar |
+| `nginx-agent` | embedded in `nginx-edge` | 9090 (internal only) | Receives config from edgepanel, writes files, tests & reloads nginx |
+| `edgepanel` | local Go build | 8081 → 8080 (internal) | Control plane; generates configs in memory and POSTs to nginx-agent |
+| `backend1/2` | `nginx:alpine` | internal only | Demo backends |
+| `prometheus` | `prom/prometheus:v2.51.0` | 9090 | Metrics |
+| `nginx-exporter` | `nginx/nginx-prometheus-exporter:1.1.0` | 9113 | Scrapes nginx stub_status |
+| `grafana` | `grafana/grafana:10.4.2` | 3000 | Dashboards |
 
 ---
 
@@ -45,7 +64,7 @@ cd edgepanel
 
 # 2. Configure secrets
 cp .env.example .env
-# Edit .env — set JWT_SECRET and GRAFANA_ADMIN_PASSWORD
+# Edit .env — set JWT_SECRET, NGINX_AGENT_TOKEN, and GRAFANA_ADMIN_PASSWORD
 
 # 3. Start the stack
 docker compose up -d --build
@@ -72,9 +91,9 @@ open http://localhost:8081
    - **Subdomain** — e.g. `app1.example.com`
    - **Upstream** — e.g. `http://backend1:80`
    - Optional: enable WAF, set paranoia level, enable IP filtering.
-4. Click **Save**, then click **Apply** to write the NGINX config and trigger a reload.
+4. Click **Save**, then click **Apply** to generate the NGINX config and push it to the nginx-agent for a live reload.
 
-The generated config is written to `/etc/nginx/conf.d/generated/routes/<id>.conf` inside the shared volume. The nginx-edge container picks it up on reload without restarting.
+Config files are written by nginx-agent to `/etc/nginx/conf.d/generated/routes/<id>.conf` inside the `nginx-edge` container. The nginx process picks them up on reload without restarting.
 
 ---
 
@@ -98,7 +117,7 @@ Each route supports an independent IP filter with:
 - **Denylist** — CIDR ranges or single IPs that are always blocked.
 - **Default policy** — `allow` (permissive) or `deny` (allowlist-only).
 
-IP lists are rendered as NGINX `allow`/`deny` directives in `/etc/nginx/conf.d/generated/iplists/<id>.allow` and `<id>.deny`.
+IP lists are rendered as NGINX `allow`/`deny` directives in `/etc/nginx/conf.d/generated/iplists/<id>.allow` and `<id>.deny` inside the `nginx-edge` container.
 
 ---
 
@@ -158,24 +177,38 @@ Access Grafana at `http://localhost:3000` (default: `admin` / value of `GRAFANA_
 
 ## Environment Variables
 
+### edgepanel
+
 | Variable | Default | Description |
 |---|---|---|
 | `JWT_SECRET` | `changeme-please-use-env` | HMAC secret for JWT signing — **must be changed** |
 | `DB_PATH` | `/data/edgepanel.db` | SQLite database path |
-| `NGINX_CONFIG_DIR` | `/etc/nginx/conf.d/generated` | Directory edgepanel writes configs into |
-| `NGINX_BINARY` | `/usr/sbin/nginx` | Path used for `nginx -t` and `nginx -s reload` |
+| `NGINX_AGENT_URL` | _(empty)_ | URL of the nginx-agent inside `nginx-edge` (e.g. `http://nginx-edge:9090`). When set, all config apply/reload operations are delegated to the agent. |
+| `NGINX_AGENT_TOKEN` | _(empty)_ | Shared secret sent as `Authorization: Bearer <token>` to the nginx-agent. Must match `AGENT_TOKEN` in the `nginx-edge` container. |
 | `PORT` | `8080` | edgepanel HTTP listen port |
 | `GRAFANA_URL` | `http://localhost:3000` | URL shown on the Metrics page |
 | `GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana admin password |
+
+### nginx-agent (inside nginx-edge)
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_PORT` | `9090` | Port the nginx-agent HTTP server listens on |
+| `AGENT_TOKEN` | _(empty)_ | Shared secret; when set, requests without a matching `Authorization: Bearer <token>` header are rejected with `401` |
+| `CONFIG_DIR` | `/etc/nginx/conf.d/generated` | Directory where nginx-agent writes the rendered config files |
+| `NGINX_BINARY` | `/usr/sbin/nginx` | Path to the nginx binary used for `-t` and `-s reload` |
 
 ---
 
 ## Security Notes
 
 - **Change `JWT_SECRET`** before deploying. A weak secret allows token forgery.
+- **Change `NGINX_AGENT_TOKEN`** before deploying. This shared secret is the only authentication layer between edgepanel and nginx-agent; leave it empty only in fully isolated environments.
 - **Change the default `admin` password** immediately after first login.
 - **Port 8080** (nginx stub_status) should not be exposed to the public internet. In production, remove the `8080:8080` port mapping and keep it on the internal Docker network only.
+- **Port 9090** (nginx-agent) is deliberately **not** published to the host. It is reachable only within the internal `edge-net` Docker network. Do not publish it.
 - **Port 8081** (edgepanel) should be placed behind a firewall or VPN in production.
+- No Docker socket (`docker.sock`) is required. edgepanel and nginx-edge communicate only via HTTP over the internal Docker network, which eliminates the host-level privilege escalation risk that the old shared-socket approach carried.
 - SQLite is stored in a named volume. Back up `/data/edgepanel.db` regularly.
 - The WAF is set to `PARANOIA=1` by default. Increase to `2`–`4` for stricter enforcement, but expect more false positives — tune with `DetectionOnly` first.
 
