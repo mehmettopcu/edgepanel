@@ -3,20 +3,29 @@ version: "3.8"
 services:
   nginx-edge:
     build:
-      context: ./nginx
+      # Build context is the repo root so the Dockerfile can access
+      # both nginx/ config files and nginx-agent/ source code.
+      context: .
+      dockerfile: nginx/Dockerfile
     container_name: nginx-edge
     restart: unless-stopped
     ports:
       - "80:80"
       - "8080:8080"  # nginx_status — restrict to internal network in production
+      # Port 9090 (nginx-agent) is intentionally NOT published to the host;
+      # edgepanel reaches it via the internal edge-net network only.
     volumes:
-      - nginx-generated:/etc/nginx/conf.d/generated
       - nginx-logs:/var/log/nginx
     environment:
       - MODSEC_RULE_ENGINE=On
       - PARANOIA=1
       - ANOMALY_INBOUND=5
       - ANOMALY_OUTBOUND=4
+      # nginx-agent configuration
+      - AGENT_PORT=9090
+      - NGINX_BINARY=/usr/sbin/nginx
+      - CONFIG_DIR=/etc/nginx/conf.d/generated
+      - AGENT_TOKEN=${NGINX_AGENT_TOKEN:-}
     depends_on:
       - backend1
       - backend2
@@ -32,14 +41,13 @@ services:
       - "8081:8080"
     volumes:
       - edgepanel-data:/data
-      - nginx-generated:/etc/nginx/conf.d/generated
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # No nginx config volume and no docker.sock needed — edgepanel sends
+      # configs to the nginx-agent HTTP API instead.
     environment:
       - DB_PATH=/data/edgepanel.db
       - JWT_SECRET=${JWT_SECRET:-changeme-please-use-env}
-      - NGINX_CONFIG_DIR=/etc/nginx/conf.d/generated
-      - NGINX_BINARY=/usr/sbin/nginx
-      - NGINX_CONTAINER=nginx-edge
+      - NGINX_AGENT_URL=http://nginx-edge:9090
+      - NGINX_AGENT_TOKEN=${NGINX_AGENT_TOKEN:-}
       - PORT=8080
       - GRAFANA_URL=${GRAFANA_URL:-http://localhost:3000}
     depends_on:
@@ -107,7 +115,6 @@ services:
       - edge-net
 
 volumes:
-  nginx-generated:
   nginx-logs:
   edgepanel-data:
   prometheus-data:

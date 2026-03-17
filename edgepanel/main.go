@@ -40,6 +40,11 @@ func main() {
 	}
 
 	gen := nginx.New(nginxConfigDir, nginxBinary)
+	if agentURL := getEnv("NGINX_AGENT_URL", ""); agentURL != "" {
+		gen.AgentURL = agentURL
+		gen.AgentToken = getEnv("NGINX_AGENT_TOKEN", "")
+		log.Printf("nginx-agent mode: forwarding config updates to %s", agentURL)
+	}
 
 	// Build a per-page template map so that shared block names (content, title,
 	// scripts) do not collide across pages. Parsing all HTML files into a single

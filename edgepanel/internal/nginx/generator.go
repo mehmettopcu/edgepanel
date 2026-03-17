@@ -61,9 +61,11 @@ const wafTemplate = `# Global WAF settings
 `
 
 type Generator struct {
-	ConfigDir       string
-	NginxBinary     string
-	NginxContainer  string // if set, use `docker exec <container>` instead of local binary
+	ConfigDir      string
+	NginxBinary    string
+	NginxContainer string // if set, use `docker exec <container>` instead of local binary
+	AgentURL       string // if set, delegate apply/reload to the nginx-agent HTTP API
+	AgentToken     string // shared secret for nginx-agent authentication (optional)
 }
 
 func New(configDir, nginxBinary string) *Generator {
@@ -71,6 +73,8 @@ func New(configDir, nginxBinary string) *Generator {
 		ConfigDir:      configDir,
 		NginxBinary:    nginxBinary,
 		NginxContainer: os.Getenv("NGINX_CONTAINER"),
+		AgentURL:       os.Getenv("NGINX_AGENT_URL"),
+		AgentToken:     os.Getenv("NGINX_AGENT_TOKEN"),
 	}
 }
 
@@ -79,10 +83,25 @@ func (g *Generator) Generate(routes []*models.Route, settings *models.GlobalSett
 	return err
 }
 
-// GenerateAndTest writes configs to a staging directory, runs nginx -t against
-// the staging tree, and if the test passes, atomically moves the files to the
-// live ConfigDir. It returns the nginx -t output and any error.
+// GenerateAndTest renders configs and applies them.
+//
+// Agent mode (NGINX_AGENT_URL is set): configs are generated in memory and
+// sent to the nginx-agent via HTTP. The agent writes the files, runs nginx -t,
+// and reloads nginx atomically. A subsequent call to Reload is a no-op.
+//
+// Local mode (no agent): configs are written to a staging directory, nginx -t
+// is run, and on success the files are promoted to the live ConfigDir.
 func (g *Generator) GenerateAndTest(routes []*models.Route, settings *models.GlobalSettings) (string, error) {
+	// Agent path — generate in memory and delegate everything to the agent.
+	if g.AgentURL != "" {
+		files, err := g.generateToMap(routes, settings)
+		if err != nil {
+			return "", fmt.Errorf("generate configs: %w", err)
+		}
+		return g.applyViaAgent(files)
+	}
+
+	// Local path — staging directory approach.
 	stagingDir := g.ConfigDir + ".staging"
 
 	// Always clean up the staging directory after we are done.
@@ -113,63 +132,60 @@ func (g *Generator) GenerateAndTest(routes []*models.Route, settings *models.Glo
 	return testOut, nil
 }
 
-// generateToDir renders all config files into destDir and returns the list of
-// written file paths.
-func (g *Generator) generateToDir(destDir string, routes []*models.Route, settings *models.GlobalSettings) ([]string, error) {
-	routesDir := filepath.Join(destDir, "routes")
-	iplistsDir := filepath.Join(destDir, "iplists")
-
-	for _, dir := range []string{routesDir, iplistsDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, fmt.Errorf("mkdir %s: %w", dir, err)
-		}
-	}
+// generateToMap renders all config files into memory as a map of
+// relative path → file content. This is used by the agent path so that
+// configs can be sent over HTTP without touching the local filesystem.
+func (g *Generator) generateToMap(routes []*models.Route, settings *models.GlobalSettings) (map[string]string, error) {
+	files := make(map[string]string)
 
 	tmpl, err := template.New("route").Parse(routeTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("parse route template: %w", err)
 	}
 
-	var written []string
 	for _, r := range routes {
 		var buf bytes.Buffer
 		if err := tmpl.Execute(&buf, r); err != nil {
 			return nil, fmt.Errorf("execute template for route %d: %w", r.ID, err)
 		}
-		confPath := filepath.Join(routesDir, fmt.Sprintf("%d.conf", r.ID))
-		if err := atomicWrite(confPath, buf.Bytes()); err != nil {
-			return nil, fmt.Errorf("write route config %d: %w", r.ID, err)
-		}
-		written = append(written, confPath)
-
-		allowPath := filepath.Join(iplistsDir, fmt.Sprintf("%d.allow", r.ID))
-		denyPath := filepath.Join(iplistsDir, fmt.Sprintf("%d.deny", r.ID))
-
-		allowContent := buildIPList(r.IPAllowlist, "allow")
-		denyContent := buildIPList(r.IPDenylist, "deny")
-
-		if err := atomicWrite(allowPath, []byte(allowContent)); err != nil {
-			return nil, err
-		}
-		if err := atomicWrite(denyPath, []byte(denyContent)); err != nil {
-			return nil, err
-		}
-		written = append(written, allowPath, denyPath)
+		files[fmt.Sprintf("routes/%d.conf", r.ID)] = buf.String()
+		files[fmt.Sprintf("iplists/%d.allow", r.ID)] = buildIPList(r.IPAllowlist, "allow")
+		files[fmt.Sprintf("iplists/%d.deny", r.ID)] = buildIPList(r.IPDenylist, "deny")
 	}
 
 	wafTmpl, err := template.New("waf").Parse(wafTemplate)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse waf template: %w", err)
 	}
 	var wafBuf bytes.Buffer
 	if err := wafTmpl.Execute(&wafBuf, settings); err != nil {
+		return nil, fmt.Errorf("execute waf template: %w", err)
+	}
+	files["waf.conf"] = wafBuf.String()
+
+	return files, nil
+}
+
+// generateToDir renders all config files into destDir and returns the list of
+// written file paths. It delegates rendering to generateToMap and then writes
+// each file atomically.
+func (g *Generator) generateToDir(destDir string, routes []*models.Route, settings *models.GlobalSettings) ([]string, error) {
+	files, err := g.generateToMap(routes, settings)
+	if err != nil {
 		return nil, err
 	}
-	wafPath := filepath.Join(destDir, "waf.conf")
-	if err := atomicWrite(wafPath, wafBuf.Bytes()); err != nil {
-		return nil, err
+
+	var written []string
+	for relPath, content := range files {
+		absPath := filepath.Join(destDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+			return nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(absPath), err)
+		}
+		if err := atomicWrite(absPath, []byte(content)); err != nil {
+			return nil, fmt.Errorf("write %s: %w", absPath, err)
+		}
+		written = append(written, absPath)
 	}
-	written = append(written, wafPath)
 
 	return written, nil
 }
@@ -197,7 +213,13 @@ func (g *Generator) Test() (string, error) {
 	return g.execNginx("-t")
 }
 
+// Reload sends a reload signal to nginx.
+// When an agent URL is configured, the reload was already performed atomically
+// by the agent during GenerateAndTest, so this method becomes a no-op.
 func (g *Generator) Reload() (string, error) {
+	if g.AgentURL != "" {
+		return "", nil
+	}
 	return g.execNginx("-s", "reload")
 }
 
