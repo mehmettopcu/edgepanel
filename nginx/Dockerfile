@@ -6,7 +6,7 @@ COPY nginx-agent/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -o nginx-agent .
 
 # Stage 2: nginx with embedded nginx-agent sidecar
-FROM owasp/modsecurity-crs:4-nginx-alpine-202405020410
+FROM owasp/modsecurity-crs:4-nginx-alpine-202603150103
 
 # Copy the compiled nginx-agent binary
 COPY --from=agent-builder /build/nginx-agent /usr/local/bin/nginx-agent
@@ -15,8 +15,11 @@ COPY --from=agent-builder /build/nginx-agent /usr/local/bin/nginx-agent
 RUN mkdir -p /etc/nginx/conf.d/generated/routes \
              /etc/nginx/conf.d/generated/iplists
 
-# Copy NGINX main config
+# Copy NGINX main config and remove the base image's template so the
+# entrypoint doesn't try (and fail) to overwrite our file at startup.
+USER root
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
+RUN rm -f /etc/nginx/templates/nginx.conf.template
 
 # Maintenance page served when a route is in maintenance mode
 COPY nginx/maintenance.html /usr/share/nginx/html/maintenance.html
