@@ -1,0 +1,187 @@
+{{template "layout" .}}
+{{define "title"}}Route: {{.Route.Name}}{{end}}
+{{define "content"}}
+<div class="flex" style="margin-bottom:24px">
+    <h1 style="margin:0">Route: {{.Route.Name}}</h1>
+    <div style="flex:1"></div>
+    <a href="/routes" class="btn btn-secondary">&#8592; Back</a>
+</div>
+
+<div class="card section">
+    <h2>Route Info</h2>
+    <div class="grid-2">
+        <div class="form-group"><label>Name</label><input id="r-name" value="{{.Route.Name}}"></div>
+        <div class="form-group"><label>Subdomain</label><input id="r-subdomain" value="{{.Route.Subdomain}}"></div>
+        <div class="form-group"><label>Upstream</label><input id="r-upstream" value="{{.Route.Upstream}}"></div>
+    </div>
+    <button class="btn btn-primary" onclick="saveBasic()">Save Basic Info</button>
+</div>
+
+<div class="card section">
+    <h2>Maintenance Mode</h2>
+    <div class="flex" style="margin-bottom:16px">
+        <label class="toggle">
+            <input type="checkbox" id="maint-enabled" {{if .Route.MaintenanceEnabled}}checked{{end}}>
+            <span class="slider"></span>
+        </label>
+        <span id="maint-status">{{if .Route.MaintenanceEnabled}}<strong style="color:#e74c3c">MAINTENANCE ON</strong>{{else}}<strong style="color:#27ae60">MAINTENANCE OFF</strong>{{end}}</span>
+    </div>
+    <div class="form-group">
+        <label>Mode</label>
+        <select id="maint-mode">
+            <option value="global" {{if eq .Route.MaintenanceMode "global"}}selected{{end}}>Global (all paths)</option>
+            <option value="path" {{if eq .Route.MaintenanceMode "path"}}selected{{end}}>Path-based</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label>Maintenance Paths (one per line)</label>
+        <textarea id="maint-paths" rows="4">{{.Route.MaintenancePaths}}</textarea>
+    </div>
+    <div class="form-group flex">
+        <input type="checkbox" id="maint-allowlist-bypass" style="width:auto" {{if .Route.AllowlistBypass}}checked{{end}}>
+        <label style="margin:0">Allow IP allowlist to bypass maintenance</label>
+    </div>
+    <button class="btn btn-primary mt-16" onclick="saveMaintenance()">Save Maintenance</button>
+</div>
+
+<div class="card section">
+    <h2>IP Filtering</h2>
+    <div class="flex" style="margin-bottom:16px">
+        <label class="toggle">
+            <input type="checkbox" id="ip-enabled" {{if .Route.IPFilterEnabled}}checked{{end}}>
+            <span class="slider"></span>
+        </label>
+        <span>IP Filter</span>
+    </div>
+    <div class="form-group">
+        <label>Default Policy</label>
+        <select id="ip-policy">
+            <option value="allow" {{if eq .Route.IPDefaultPolicy "allow"}}selected{{end}}>Allow (whitelist mode)</option>
+            <option value="deny" {{if eq .Route.IPDefaultPolicy "deny"}}selected{{end}}>Deny (blacklist mode)</option>
+        </select>
+    </div>
+    <div class="grid-2">
+        <div class="form-group">
+            <label>Allowlist (one IP/CIDR per line)</label>
+            <textarea id="ip-allowlist" rows="6">{{.Route.IPAllowlist}}</textarea>
+        </div>
+        <div class="form-group">
+            <label>Denylist (one IP/CIDR per line)</label>
+            <textarea id="ip-denylist" rows="6">{{.Route.IPDenylist}}</textarea>
+        </div>
+    </div>
+    <button class="btn btn-primary" onclick="saveIPFilter()">Save IP Filter</button>
+</div>
+
+<div class="card section">
+    <h2>WAF (ModSecurity)</h2>
+    <div class="flex" style="margin-bottom:16px">
+        <label class="toggle">
+            <input type="checkbox" id="waf-enabled" {{if .Route.WAFEnabled}}checked{{end}}>
+            <span class="slider"></span>
+        </label>
+        <span>WAF Enabled</span>
+    </div>
+    <div class="form-group" style="max-width:300px">
+        <label>Paranoia Level</label>
+        <select id="waf-paranoia">
+            <option value="1" {{if eq .Route.WAFParanoiaLevel 1}}selected{{end}}>1 - Minimal (Low false positives)</option>
+            <option value="2" {{if eq .Route.WAFParanoiaLevel 2}}selected{{end}}>2 - Low</option>
+            <option value="3" {{if eq .Route.WAFParanoiaLevel 3}}selected{{end}}>3 - Medium</option>
+            <option value="4" {{if eq .Route.WAFParanoiaLevel 4}}selected{{end}}>4 - High (Strict)</option>
+        </select>
+    </div>
+    <button class="btn btn-primary" onclick="saveWAF()">Save WAF Settings</button>
+</div>
+
+<div class="card">
+    <h2>Apply Changes</h2>
+    <p class="text-muted" style="margin-bottom:16px">Generate NGINX configuration and reload. This affects all routes.</p>
+    <button class="btn btn-success" onclick="applyNginx()">&#9889; Apply to NGINX</button>
+</div>
+{{end}}
+{{define "scripts"}}
+<script>
+const routeId = {{.Route.ID}};
+
+document.getElementById('maint-enabled').addEventListener('change', function() {
+    document.getElementById('maint-status').innerHTML = this.checked
+        ? '<strong style="color:#e74c3c">MAINTENANCE ON</strong>'
+        : '<strong style="color:#27ae60">MAINTENANCE OFF</strong>';
+});
+
+function collectRoutePayload() {
+    return {
+        name: document.getElementById('r-name').value,
+        subdomain: document.getElementById('r-subdomain').value,
+        upstream: document.getElementById('r-upstream').value,
+        maintenance_enabled: document.getElementById('maint-enabled').checked,
+        maintenance_mode: document.getElementById('maint-mode').value,
+        maintenance_paths: document.getElementById('maint-paths').value,
+        allowlist_bypass: document.getElementById('maint-allowlist-bypass').checked,
+        ip_filter_enabled: document.getElementById('ip-enabled').checked,
+        ip_default_policy: document.getElementById('ip-policy').value,
+        ip_allowlist: document.getElementById('ip-allowlist').value,
+        ip_denylist: document.getElementById('ip-denylist').value,
+        waf_enabled: document.getElementById('waf-enabled').checked,
+        waf_paranoia_level: parseInt(document.getElementById('waf-paranoia').value)
+    };
+}
+
+async function saveRoute(successMsg) {
+    await apiFetch('/api/routes/'+routeId, {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(collectRoutePayload())
+    });
+    showAlert(successMsg);
+}
+
+async function saveBasic() {
+    try { await saveRoute('Basic info saved!'); } catch(e) { showAlert(e.message, 'error'); }
+}
+
+async function saveMaintenance() {
+    try {
+        await apiFetch('/api/routes/'+routeId+'/maintenance', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                enabled: document.getElementById('maint-enabled').checked,
+                mode: document.getElementById('maint-mode').value,
+                paths: document.getElementById('maint-paths').value,
+                allowlist_bypass: document.getElementById('maint-allowlist-bypass').checked
+            })
+        });
+        showAlert('Maintenance settings saved!');
+    } catch(e) { showAlert(e.message, 'error'); }
+}
+
+async function saveIPFilter() {
+    try {
+        await apiFetch('/api/routes/'+routeId+'/ip-filter', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                enabled: document.getElementById('ip-enabled').checked,
+                default_policy: document.getElementById('ip-policy').value,
+                allowlist: document.getElementById('ip-allowlist').value,
+                denylist: document.getElementById('ip-denylist').value
+            })
+        });
+        showAlert('IP filter saved!');
+    } catch(e) { showAlert(e.message, 'error'); }
+}
+
+async function saveWAF() {
+    try { await saveRoute('WAF settings saved!'); } catch(e) { showAlert(e.message, 'error'); }
+}
+
+async function applyNginx() {
+    try {
+        const d = await apiFetch('/api/apply', {method:'POST'});
+        showAlert(d.message || 'Applied!');
+    } catch(e) { showAlert(e.message, 'error'); }
+}
+</script>
+{{end}}

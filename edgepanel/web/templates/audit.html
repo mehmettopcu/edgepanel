@@ -1,0 +1,26 @@
+{{template "layout" .}}
+{{define "title"}}Audit Log{{end}}
+{{define "content"}}
+<h1>Audit Log</h1>
+<div class="card">
+    <table>
+        <thead>
+            <tr><th>Time</th><th>User</th><th>Action</th><th>Resource</th><th>ID</th><th>Details</th></tr>
+        </thead>
+        <tbody>
+        {{range .Logs}}
+        <tr>
+            <td class="text-muted" style="white-space:nowrap">{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
+            <td><strong>{{.Username}}</strong></td>
+            <td><span class="badge badge-blue">{{.Action}}</span></td>
+            <td>{{.ResourceType}}</td>
+            <td class="text-muted">{{if .ResourceID}}{{.ResourceID}}{{end}}</td>
+            <td class="text-muted">{{.Details}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="6" style="text-align:center;color:#6c757d;padding:32px">No audit log entries.</td></tr>
+        {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}

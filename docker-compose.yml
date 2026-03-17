@@ -1,0 +1,118 @@
+version: "3.8"
+
+services:
+  nginx-edge:
+    build:
+      context: ./nginx
+    container_name: nginx-edge
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "8080:8080"  # nginx_status — restrict to internal network in production
+    volumes:
+      - nginx-generated:/etc/nginx/conf.d/generated
+      - nginx-logs:/var/log/nginx
+    environment:
+      - MODSEC_RULE_ENGINE=On
+      - PARANOIA=1
+      - ANOMALY_INBOUND=5
+      - ANOMALY_OUTBOUND=4
+    depends_on:
+      - backend1
+      - backend2
+    networks:
+      - edge-net
+
+  edgepanel:
+    build:
+      context: ./edgepanel
+    container_name: edgepanel
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      - edgepanel-data:/data
+      - nginx-generated:/etc/nginx/conf.d/generated
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - DB_PATH=/data/edgepanel.db
+      - JWT_SECRET=${JWT_SECRET:-changeme-please-use-env}
+      - NGINX_CONFIG_DIR=/etc/nginx/conf.d/generated
+      - NGINX_BINARY=/usr/sbin/nginx
+      - NGINX_CONTAINER=nginx-edge
+      - PORT=8080
+      - GRAFANA_URL=${GRAFANA_URL:-http://localhost:3000}
+    depends_on:
+      - nginx-edge
+    networks:
+      - edge-net
+
+  backend1:
+    image: nginx:alpine
+    container_name: backend1
+    volumes:
+      - ./demo/backend1:/usr/share/nginx/html:ro
+    networks:
+      - edge-net
+
+  backend2:
+    image: nginx:alpine
+    container_name: backend2
+    volumes:
+      - ./demo/backend2:/usr/share/nginx/html:ro
+    networks:
+      - edge-net
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - edge-net
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.1.0
+    container_name: nginx-exporter
+    restart: unless-stopped
+    command:
+      - --nginx.scrape-uri=http://nginx-edge:8080/nginx_status
+    ports:
+      - "9113:9113"
+    depends_on:
+      - nginx-edge
+    networks:
+      - edge-net
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    networks:
+      - edge-net
+
+volumes:
+  nginx-generated:
+  nginx-logs:
+  edgepanel-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  edge-net:
+    driver: bridge
