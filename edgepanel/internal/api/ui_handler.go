@@ -11,8 +11,8 @@ import (
 )
 
 type UIHandler struct {
-	DB   *db.DB
-	Tmpl *template.Template
+	DB        *db.DB
+	Templates map[string]*template.Template
 }
 
 func (h *UIHandler) getAuthInfo(r *http.Request) (int64, string, bool, bool) {
@@ -37,7 +37,7 @@ func (h *UIHandler) Index(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UIHandler) LoginPage(w http.ResponseWriter, r *http.Request) {
-	h.Tmpl.ExecuteTemplate(w, "login.html", nil)
+	h.Templates["login.html"].ExecuteTemplate(w, "login.html", nil)
 }
 
 func (h *UIHandler) RoutesPage(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +57,7 @@ func (h *UIHandler) RoutesPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	h.Tmpl.ExecuteTemplate(w, "routes.html", map[string]interface{}{
+	h.Templates["routes.html"].ExecuteTemplate(w, "routes.html", map[string]interface{}{
 		"Routes":   routes,
 		"Username": username,
 		"IsAdmin":  isAdmin,
@@ -87,7 +87,7 @@ func (h *UIHandler) RouteDetailPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.Tmpl.ExecuteTemplate(w, "route_detail.html", map[string]interface{}{
+	h.Templates["route_detail.html"].ExecuteTemplate(w, "route_detail.html", map[string]interface{}{
 		"Route":    route,
 		"Username": username,
 		"IsAdmin":  isAdmin,
@@ -114,7 +114,7 @@ func (h *UIHandler) UsersPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	h.Tmpl.ExecuteTemplate(w, "users.html", map[string]interface{}{
+	h.Templates["users.html"].ExecuteTemplate(w, "users.html", map[string]interface{}{
 		"Users":    users,
 		"Routes":   routes,
 		"Username": username,
@@ -133,7 +133,7 @@ func (h *UIHandler) AuditPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	h.Tmpl.ExecuteTemplate(w, "audit.html", map[string]interface{}{
+	h.Templates["audit.html"].ExecuteTemplate(w, "audit.html", map[string]interface{}{
 		"Logs":     logs,
 		"Username": username,
 		"IsAdmin":  isAdmin,
@@ -146,7 +146,7 @@ func (h *UIHandler) MetricsPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	h.Tmpl.ExecuteTemplate(w, "metrics.html", map[string]interface{}{
+	h.Templates["metrics.html"].ExecuteTemplate(w, "metrics.html", map[string]interface{}{
 		"Username": username,
 		"IsAdmin":  isAdmin,
 	})

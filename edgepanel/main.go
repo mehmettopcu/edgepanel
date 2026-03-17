@@ -41,7 +41,22 @@ func main() {
 
 	gen := nginx.New(nginxConfigDir, nginxBinary)
 
-	tmpl := template.Must(template.ParseFS(templateFS, "web/templates/*.html"))
+	// Build a per-page template map so that shared block names (content, title,
+	// scripts) do not collide across pages. Parsing all HTML files into a single
+	// template.Template causes the last-parsed file's block definitions to win,
+	// making every page render the same content.
+	pageTemplates := map[string][]string{
+		"login.html":        {"web/templates/login.html"},
+		"routes.html":       {"web/templates/layout.html", "web/templates/routes.html"},
+		"route_detail.html": {"web/templates/layout.html", "web/templates/route_detail.html"},
+		"users.html":        {"web/templates/layout.html", "web/templates/users.html"},
+		"audit.html":        {"web/templates/layout.html", "web/templates/audit.html"},
+		"metrics.html":      {"web/templates/layout.html", "web/templates/metrics.html"},
+	}
+	templates := make(map[string]*template.Template, len(pageTemplates))
+	for page, files := range pageTemplates {
+		templates[page] = template.Must(template.ParseFS(templateFS, files...))
+	}
 
 	authHandler := &api.AuthHandler{DB: database}
 	routesHandler := &api.RoutesHandler{DB: database}
@@ -49,7 +64,7 @@ func main() {
 	applyHandler := &api.ApplyHandler{DB: database, Generator: gen}
 	auditHandler := &api.AuditHandler{DB: database}
 	settingsHandler := &api.SettingsHandler{DB: database}
-	uiHandler := &api.UIHandler{DB: database, Tmpl: tmpl}
+	uiHandler := &api.UIHandler{DB: database, Templates: templates}
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
